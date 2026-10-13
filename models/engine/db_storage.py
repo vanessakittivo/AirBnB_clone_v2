@@ -2,9 +2,9 @@
 """SQLAlchemy-backed storage engine for the AirBnB project."""
 
 import os
+from urllib.parse import quote_plus
 
 from sqlalchemy import create_engine
-from sqlalchemy.engine import URL
 from sqlalchemy.orm import scoped_session, sessionmaker
 
 
@@ -34,12 +34,11 @@ class DBStorage:
                 )
             )
 
-        url = URL.create(
-            "mysql+mysqldb",
-            username=username,
-            password=password,
-            host=host,
-            database=database,
+        url = "mysql+mysqldb://{}:{}@{}/{}".format(
+            quote_plus(username),
+            quote_plus(password),
+            host,
+            database,
         )
         self.__engine = create_engine(url, pool_pre_ping=True)
 
