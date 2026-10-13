@@ -1,54 +1,96 @@
 #!/usr/bin/python3
-"""Temporary DBStorage interface for the AirBnB project."""
+"""SQLAlchemy-backed storage engine for the AirBnB project."""
+
+import os
+
+from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import scoped_session, sessionmaker
 
 
 class DBStorage:
-    """Provide the storage interface required by the project."""
+    """Persist model instances in a MySQL database through SQLAlchemy."""
+
+    __engine = None
+    __session = None
 
     def __init__(self):
-        """Initialize temporary in-memory storage."""
-        self.__objects = {}
+        """Create the MySQL engine using the configured environment values."""
+        username = os.getenv("HBNB_MYSQL_USER")
+        password = os.getenv("HBNB_MYSQL_PWD")
+        host = os.getenv("HBNB_MYSQL_HOST", "localhost")
+        database = os.getenv("HBNB_MYSQL_DB")
+        missing = [
+            name for name, value in (
+                ("HBNB_MYSQL_USER", username),
+                ("HBNB_MYSQL_PWD", password),
+                ("HBNB_MYSQL_DB", database),
+            ) if value is None
+        ]
+        if missing:
+            raise RuntimeError(
+                "Set the MySQL environment variables: {}".format(
+                    ", ".join(missing)
+                )
+            )
+
+        url = URL.create(
+            "mysql+mysqldb",
+            username=username,
+            password=password,
+            host=host,
+            database=database,
+        )
+        self.__engine = create_engine(url, pool_pre_ping=True)
 
     def all(self, cls=None):
-        """Return all objects, optionally filtered by class."""
-        if cls is None:
-            return self.__objects
-
-        return {
-            key: obj
-            for key, obj in self.__objects.items()
-            if isinstance(obj, cls)
-        }
+        """Return stored objects, optionally restricted to one model class."""
+        models = self._model_classes()
+        classes = (cls,) if cls is not None else models
+        objects = {}
+        for model in classes:
+            for obj in self.__session.query(model).all():
+                key = "{}.{}".format(obj.__class__.__name__, obj.id)
+                objects[key] = obj
+        return objects
 
     def new(self, obj):
-        """Add an object to temporary storage."""
-        key = "{}.{}".format(
-            obj.__class__.__name__,
-            obj.id
-        )
-        self.__objects[key] = obj
+        """Add an object to the current database session."""
+        self.__session.add(obj)
 
     def save(self):
-        """Placeholder for database transaction commit."""
-        pass
+        """Commit the current database session."""
+        self.__session.commit()
 
     def delete(self, obj=None):
-        """Delete an object from temporary storage."""
-        if obj is None:
-            return
-
-        key = "{}.{}".format(
-            obj.__class__.__name__,
-            obj.id
-        )
-
-        if key in self.__objects:
-            del self.__objects[key]
+        """Delete an object from the current database session if provided."""
+        if obj is not None:
+            self.__session.delete(obj)
 
     def reload(self):
-        """Placeholder for database session initialization."""
-        pass
+        """Load mapped models, create tables, and start a thread-safe session."""
+        from models.base_model import Base
+        self._model_classes()
+
+        if os.getenv("HBNB_ENV") == "test":
+            Base.metadata.drop_all(self.__engine)
+        Base.metadata.create_all(self.__engine)
+        factory = sessionmaker(bind=self.__engine, expire_on_commit=False)
+        self.__session = scoped_session(factory)
 
     def close(self):
-        """Placeholder for closing a database session."""
-        pass
+        """Remove the current thread's session from the scoped registry."""
+        if self.__session is not None:
+            self.__session.remove()
+
+    @staticmethod
+    def _model_classes():
+        """Import and return all persistent classes before metadata operations."""
+        from models.user import User
+        from models.state import State
+        from models.city import City
+        from models.amenity import Amenity
+        from models.place import Place
+        from models.review import Review
+
+        return (User, State, City, Amenity, Place, Review)
